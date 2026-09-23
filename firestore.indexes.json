@@ -1,0 +1,1 @@
+{"fieldOverrides":[],"indexes":[{"collectionGroup":"users","fields":[{"fieldPath":"role","order":"ASCENDING"},{"fieldPath":"verified","order":"ASCENDING"}],"queryScope":"COLLECTION"},{"collectionGroup":"appointments","fields":[{"fieldPath":"doctorId","order":"ASCENDING"},{"fieldPath":"date","order":"ASCENDING"}],"queryScope":"COLLECTION"}]}

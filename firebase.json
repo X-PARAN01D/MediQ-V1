@@ -1,0 +1,1 @@
+{"firestore":{"indexes":"firestore.indexes.json","rules":"firestore.rules"},"functions":[{"codebase":"default","ignore":["node_modules",".git","src/**/*.test.ts"],"source":"functions"}],"storage":{"rules":"storage.rules"}}

@@ -1,0 +1,151 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isAdmin() { return signedIn() && request.auth.token.role == 'admin'; }
+    function isDoctor() { return signedIn() && request.auth.token.role == 'doctor'; }
+    function verifiedDoctor() {
+      return isDoctor() && request.auth.token.verified == true;
+    }
+    function ownUserDoc(userId) { return signedIn() && request.auth.uid == userId; }
+
+    // ── Users ──────────────────────────────────────────────────────────
+    // Profile docs live at /users/{firebaseAuthUid}. Doctors are publicly
+    // discoverable once verified (the Find Doctors directory); everyone else
+    // is private to self/staff.
+    // role/verified are immutable from the client — only Cloud Functions /
+    // admin SDK change them (via syncUserClaims triggers + bootstrapAdmin).
+    // A registering doctor may set verification:'pending' on create.
+    // A rejected doctor may move their own verification back to 'pending'
+    // (resubmission) — they can never set it to 'approved' themselves.
+    match /users/{userId} {
+      allow read: if ownUserDoc(userId) || verifiedDoctor() || isAdmin()
+        || (signedIn() && resource.data.role == 'doctor' && resource.data.verified == true);
+      allow create: if ownUserDoc(userId)
+        && request.resource.data.role in ['patient', 'doctor']
+        && !request.resource.data.keys().hasAny(['verified'])
+        && (!request.resource.data.keys().hasAny(['verification'])
+            || (request.resource.data.role == 'doctor'
+                && request.resource.data.verification == 'pending'));
+      allow update: if (ownUserDoc(userId)
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'verified'])
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['verification'])
+              || (resource.data.verification == 'rejected'
+                  && request.resource.data.verification == 'pending'
+                  && request.resource.data.diff(resource.data).affectedKeys()
+                       .hasOnly(['verification', 'verificationReason', 'licenseDocUrl', 'selfieUrl']))))
+        || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ── Triages: patient owns; verified doctors and admins can read (queue work).
+    match /triages/{id} {
+      allow read: if signedIn() && (
+        resource.data.patientId == request.auth.uid || verifiedDoctor() || isAdmin());
+      allow create: if signedIn() && request.resource.data.patientId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // ── Tokens: issued by the issueToken Cloud Function only.
+    // Claimed/released atomically via claimToken/releaseToken callables.
+    // Patients may revoke their own; doctors may complete via client update.
+    match /tokens/{id} {
+      allow read: if signedIn() && (
+        resource.data.patientId == request.auth.uid || verifiedDoctor() || isAdmin());
+      allow create: if false; // only Cloud Functions
+      allow update: if (signedIn() && resource.data.patientId == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+          && request.resource.data.status == 'revoked')
+        || (verifiedDoctor()
+          && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'doctorId', 'doctorName', 'claimedAt', 'notes', 'prescriptionId', 'callDurationSec', 'completedAt']));
+      allow delete: if isAdmin();
+    }
+
+    // ── Per-band daily counters — Cloud Functions only.
+    match /counters/{id} {
+      allow read, write: if false;
+    }
+
+    // ── Prescriptions: patient + involved doctor + admin.
+    match /prescriptions/{id} {
+      allow read: if signedIn() && (
+        resource.data.patientId == request.auth.uid
+        || (isDoctor() && resource.data.doctorId == request.auth.uid)
+        || isAdmin());
+      allow create: if verifiedDoctor() && request.resource.data.doctorId == request.auth.uid;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ── Appointments: participants + admin.
+    match /appointments/{id} {
+      allow read: if signedIn() && (
+        resource.data.patientId == request.auth.uid
+        || (isDoctor() && resource.data.doctorId == request.auth.uid)
+        || isAdmin());
+      allow create: if signedIn() && request.resource.data.patientId == request.auth.uid;
+      allow update: if signedIn() && (
+        resource.data.patientId == request.auth.uid
+        || (isDoctor() && resource.data.doctorId == request.auth.uid)
+        || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // ── Notifications: recipient only; created by Cloud Functions.
+    // Recipients may mark read (keys `read` and `readAt` only).
+    match /notifications/{id} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow create: if false; // notifyUser Cloud Function only
+      allow update: if signedIn() && resource.data.userId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt']);
+      allow delete: if isAdmin();
+    }
+
+    // ── Audit: append-only. Any signed-in user may append their own actions
+    // (actorId must be their uid); only admins/doctors read.
+    match /audit/{id} {
+      allow read: if isAdmin() || verifiedDoctor();
+      allow create: if signedIn()
+        && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.keys().hasOnly(['actorId', 'actorName', 'action', 'detail', 'createdAt']);
+      allow update, delete: if false;
+    }
+
+    // ── Emergency alerts: creator + staff.
+    match /emergency/{id} {
+      allow read: if signedIn() && (
+        resource.data.patientId == request.auth.uid || verifiedDoctor() || isAdmin());
+      allow create: if signedIn() && request.resource.data.patientId == request.auth.uid;
+      allow update: if isAdmin() || verifiedDoctor();
+      allow delete: if isAdmin();
+    }
+
+    // ── Call signalling: only the two participants (patientId/doctorId on
+    // the call document). A verified doctor may also read a call that has no
+    // doctor assigned yet (doctorId empty) so they can join.
+    match /calls/{callId} {
+      function callDoc() {
+        return get(/databases/$(database)/documents/calls/$(callId)).data;
+      }
+      function isParticipantData(d) {
+        return signedIn() && (d.patientId == request.auth.uid || d.doctorId == request.auth.uid);
+      }
+      allow get: if isParticipantData(resource.data)
+        || (verifiedDoctor() && (!('doctorId' in resource.data) || resource.data.doctorId == ''));
+      allow list: if false;
+      allow create: if isParticipantData(request.resource.data)
+        && request.resource.data.keys().hasOnly(['createdBy', 'patientId', 'doctorId', 'createdAt']);
+      allow update: if isParticipantData(resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['offer', 'answer']);
+      allow delete: if isParticipantData(resource.data);
+      match /offerCandidates/{c} {
+        allow read, write: if isParticipantData(callDoc());
+      }
+      match /answerCandidates/{c} {
+        allow read, write: if isParticipantData(callDoc());
+      }
+    }
+  }
+}

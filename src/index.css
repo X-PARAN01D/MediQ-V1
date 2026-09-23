@@ -1,0 +1,69 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --page: #f5f8fb;
+  --card: #ffffff;
+  --line: #e2eaf2;
+  --ink: #0f2440;
+  --ink-2: #2c425f;
+  --ink-3: #5b7189;
+  --brand: #0b64b4;
+  --brand-dark: #0a5091;
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background: var(--page);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans', Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* thin scrollbars for horizontal strips */
+.nice-scroll::-webkit-scrollbar { height: 6px; width: 6px; }
+.nice-scroll::-webkit-scrollbar-thumb { background: #c9d6e3; border-radius: 3px; }
+
+/* subtle idle float for the SAATHI button */
+@keyframes saathi-idle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+.saathi-idle { animation: saathi-idle 3.2s ease-in-out infinite; }
+
+/* SAATHI floating button — Deep's locked 3D bot icon idle animation:
+   gentle float most of the time, one playful 360° spin every 7 seconds. */
+.saathi-fab {
+  animation: saathi-spin-idle 7s ease-in-out infinite;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+@keyframes saathi-spin-idle {
+  0%, 80%   { transform: translateY(0)    rotateY(0deg);   }
+  86%       { transform: translateY(-8px)  rotateY(180deg); }
+  92%, 100% { transform: translateY(0)    rotateY(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .saathi-fab { animation: none; }
+}
+
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(185, 28, 28, 0.35); }
+  70% { box-shadow: 0 0 0 10px rgba(185, 28, 28, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(185, 28, 28, 0); }
+}
+.emergency-pulse { animation: pulse-ring 2s ease-out infinite; }
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-up { animation: fade-up 0.25s ease-out; }
+
+input[type='number']::-webkit-inner-spin-button { -webkit-appearance: none; }
